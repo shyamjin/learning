@@ -40,7 +40,7 @@ def save_db_schemas(data):
     with open(DATA_FILE, "w") as f:
         json.dump(data, f, indent=2)
 
-
+st.set_page_config(layout="wide")
 # --------- Session state setup ---------
 if "db_schemas" not in st.session_state:
     st.session_state.db_schemas = load_db_schemas()
@@ -93,7 +93,7 @@ elif menu == "Request":
         st.warning("No registered DBs. Please register first.")
     else:
         with st.container(border=True):
-            col_left, col_right = st.columns([10, 4])
+            col_left, col_right = st.columns([100, 4])
 
             with col_left:
                 db_options = list(db_schemas.keys())
@@ -119,9 +119,16 @@ elif menu == "Request":
                 st.info(f"💬 Prompt:\n{user_prompt}")
                 st.markdown("---")
                 if len(result_tables) == 1:
-                    df = list(result_tables.values())[0]
+                    table_name, df = list(result_tables.items())[0]
                     st.subheader("Generated Data")
                     st.dataframe(df, use_container_width=True)
+                    if st.button(f"💾 Submit {table_name} to DB"):
+                        try:
+                            # save_df_to_db(df, table_name, engine)
+                            st.success(f"✅ {table_name} saved to DB.")
+                        except Exception as e:
+                            st.error(f"❌ Failed: {e}")
+
                 else:
                     tab_titles = list(result_tables.keys())
                     tabs = st.tabs(tab_titles)
@@ -129,4 +136,10 @@ elif menu == "Request":
                         with tab:
                             st.subheader(f"{title} Table")
                             st.dataframe(result_tables[title], use_container_width=True)
+                            if st.button(f"💾 Submit {title} to DB", key=f"save_{title}"):
+                                try:
+                                    # save_df_to_db(df, title, engine)
+                                    st.success(f"✅ {title} saved to DB.")
+                                except Exception as e:
+                                    st.error(f"❌ Failed to save {title}: {e}")
 
