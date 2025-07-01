@@ -1,29 +1,41 @@
+import streamlit as st
 from sqlalchemy import create_engine, MetaData
-from graphviz import Digraph
+import networkx as nx
+from pyvis.network import Network
+import tempfile
+import os
 
-# Connect to your database
-engine = create_engine("postgresql://user:password@host:port/dbname")
-
-# Reflect schema
+# --- DB connection ---
+engine = create_engine("postgresql://user:password@host:port/dbname")  # update this
 metadata = MetaData()
 metadata.reflect(bind=engine)
 
-# Create Graphviz graph
-dot = Digraph(comment='Table Relationships', format='png')  # or use 'pdf'/'svg'
-dot.attr(rankdir='LR', fontsize='10', size='8')
-
-# Add table nodes
+# --- Build dependency graph ---
+G = nx.DiGraph()
 for table_name in metadata.tables:
-    dot.node(table_name)
-
-# Add foreign key edges
+    G.add_node(table_name)
 for table in metadata.tables.values():
     for fk in table.foreign_keys:
-        parent = fk.column.table.name
-        child = table.name
-        dot.edge(parent, child)
+        G.add_edge(fk.column.table.name, table.name)
 
-# Render and view
-output_path = "table_relationships"
-dot.render(output_path, view=True)  # opens the generated PNG or PDF
+# --- PyVis network setup ---
+net = Network(height="700px", width="100%", directed=True, notebook=False)
+for node in G.nodes:
+    net.add_node(node, label=node, color='red' if node == 'student' else 'skyblue')
 
+for source, target in G.edges:
+    net.add_edge(source, target)
+
+# --- Generate interactive HTML ---
+with tempfile.NamedTemporaryFile(delete=False, suffix=".html") as tmp_file:
+    net.show(tmp_file.name)
+    HtmlFile = open(tmp_file.name, 'r', encoding='utf-8')
+    source_code = HtmlFile.read()
+
+# --- Display in Streamlit ---
+st.title("Database Table Relationship Graph (FKs)")
+st.components.v1.html(source_code, height=750, scrolling=True)
+
+# Cleanup temp file
+HtmlFile.close()
+os.unlink(tmp_file.name)
