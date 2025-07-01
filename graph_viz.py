@@ -1,41 +1,48 @@
 import streamlit as st
 from sqlalchemy import create_engine, MetaData
-import networkx as nx
 from pyvis.network import Network
+import networkx as nx
 import tempfile
 import os
 
 # --- DB connection ---
-engine = create_engine("postgresql://user:password@host:port/dbname")  # update this
+engine = create_engine("postgresql://user:password@localhost:5432/yourdbname")  # Update this
 metadata = MetaData()
 metadata.reflect(bind=engine)
 
 # --- Build dependency graph ---
 G = nx.DiGraph()
+
+# Add all table nodes
 for table_name in metadata.tables:
     G.add_node(table_name)
+
+# Add FK edges
 for table in metadata.tables.values():
     for fk in table.foreign_keys:
-        G.add_edge(fk.column.table.name, table.name)
+        source = fk.column.table.name  # referenced table (parent)
+        target = table.name            # referencing table (child)
+        G.add_edge(source, target)
 
-# --- PyVis network setup ---
-net = Network(height="700px", width="100%", directed=True, notebook=False)
+# --- Build PyVis Network ---
+highlight = st.text_input("Highlight table", "student")
+
+net = Network(height="700px", width="100%", directed=True)
 for node in G.nodes:
-    net.add_node(node, label=node, color='red' if node == 'student' else 'skyblue')
+    net.add_node(node, label=node,
+                 color='red' if node == highlight else 'skyblue',
+                 shape='box')
 
 for source, target in G.edges:
     net.add_edge(source, target)
 
-# --- Generate interactive HTML ---
+# --- Render as HTML ---
 with tempfile.NamedTemporaryFile(delete=False, suffix=".html") as tmp_file:
     net.show(tmp_file.name)
-    HtmlFile = open(tmp_file.name, 'r', encoding='utf-8')
-    source_code = HtmlFile.read()
+    html_content = open(tmp_file.name, 'r', encoding='utf-8').read()
 
-# --- Display in Streamlit ---
-st.title("Database Table Relationship Graph (FKs)")
-st.components.v1.html(source_code, height=750, scrolling=True)
+st.title("📊 Table Relationship Graph (Foreign Keys)")
+st.components.v1.html(html_content, height=750, scrolling=True)
 
-# Cleanup temp file
-HtmlFile.close()
+# Clean up temp file
 os.unlink(tmp_file.name)
