@@ -157,3 +157,16 @@ synthesizer = fit_with_dynamic_constraints(
 
 # Generate synthetic data
 synthetic_data = synthesizer.sample(scale=1.0)
+
+
+# Minimal working example
+from sdv.metadata import MultiTableMetadata
+from sdv.constraints import ScalarInequality
+
+metadata = MultiTableMetadata()
+metadata.add_table(name='test', data=pd.DataFrame(columns=['age']))
+
+constraint = ScalarInequality(column_name='age', relation='>=', value=18)
+synthesizer = HMASynthesizer(metadata)
+synthesizer.add_constraints([('test', constraint)])
+synthesizer.fit(tables={'test': pd.DataFrame(columns=['age'])})
