@@ -7,10 +7,26 @@ from sdv.constraints import Constraint
 from sdv.multi_table import HMASynthesizer
 
 
-
 def create_dynamic_constraints(constraint_specs, metadata):
-    """Properly initializes SDV constraints for version 1.23.0"""
+    """Robust constraint initialization for SDV 1.23.0"""
     constraints_list = []
+    
+    # Constraint initialization strategies
+    CONSTRUCTOR_PARAM_TYPES = [
+        'FixedCombinations',
+        'UniqueCombinations',
+        'Positive',
+        'Negative',
+        'OneHotEncoding',
+        'CustomConstraint'
+    ]
+    
+    SET_PARAMETERS_TYPES = [
+        'Inequality',
+        'ScalarInequality',
+        'Range',
+        'FixedIncrements'
+    ]
     
     for spec in constraint_specs:
         table_name = spec["table"]
@@ -38,30 +54,41 @@ def create_dynamic_constraints(constraint_specs, metadata):
                             f"Available columns: {table_columns}"
                         )
         
-        # SPECIAL HANDLING FOR SPECIFIC CONSTRAINT TYPES
+        # Initialize constraint using the correct strategy
         try:
-            # For constraints that require constructor parameters
-            if constraint_type in ["FixedCombinations", "UniqueCombinations"]:
+            if constraint_type in CONSTRUCTOR_PARAM_TYPES:
+                # Direct initialization with parameters
                 constraint = constraint_class(**params)
-            
-            # For constraints that need special initialization
-            elif constraint_type in ["Inequality", "ScalarInequality", "Range"]:
+                
+            elif constraint_type in SET_PARAMETERS_TYPES:
+                # Special initialization sequence
                 constraint = constraint_class()
                 constraint._set_parameters(**params)
-            
-            # For other constraints
+                
+                # Some constraints require additional setup
+                if hasattr(constraint, '_fit'):
+                    # Create dummy data for fitting
+                    dummy_data = pd.DataFrame(columns=[params.get('column_name')] or 
+                                            params.get('low_column_name', '') or 
+                                            list(params.get('column_names', [])))
+                    constraint._fit(dummy_data)
+                    
             else:
+                # Try both initialization strategies
                 try:
-                    # First try with parameters in constructor
                     constraint = constraint_class(**params)
                 except TypeError:
-                    # Fallback to parameter setting
                     constraint = constraint_class()
-                    constraint._set_parameters(**params)
+                    if hasattr(constraint, '_set_parameters'):
+                        constraint._set_parameters(**params)
+                    elif hasattr(constraint, '_fit'):
+                        constraint._fit(None)
+        
         except Exception as e:
             raise RuntimeError(
                 f"Failed to initialize {constraint_type} constraint: {str(e)}\n"
-                f"Parameters: {params}"
+                f"Parameters: {params}\n"
+                f"Try different parameter names or constraint type"
             )
         
         constraints_list.append((table_name, constraint))
