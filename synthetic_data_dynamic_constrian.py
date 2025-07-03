@@ -7,13 +7,15 @@ from sdv.constraints import Constraint
 from sdv.multi_table import HMASynthesizer
 
 
+import pandas as pd
+from sdv import constraints as sdv_constraints
+
 def create_dynamic_constraints(constraint_specs, metadata):
-    """Robust constraint initialization for SDV 1.23.0"""
+    """Create properly initialized SDV constraints for version 1.23.0"""
     constraints_list = []
     
-    # Constraint initialization strategies
+    # Types of constraints that accept params directly in constructor
     CONSTRUCTOR_PARAM_TYPES = [
-        'FixedCombinations',
         'UniqueCombinations',
         'Positive',
         'Negative',
@@ -21,6 +23,7 @@ def create_dynamic_constraints(constraint_specs, metadata):
         'CustomConstraint'
     ]
     
+    # Types that require special _set_parameters + _fit calls
     SET_PARAMETERS_TYPES = [
         'Inequality',
         'ScalarInequality',
@@ -28,96 +31,87 @@ def create_dynamic_constraints(constraint_specs, metadata):
         'FixedIncrements'
     ]
     
+    # Multi-table constraints requiring table_name as first positional argument
+    MULTI_TABLE_CONSTRAINTS = [
+        'FixedCombinations',
+    ]
+    
     for spec in constraint_specs:
         table_name = spec["table"]
         constraint_type = spec["type"]
-        params = spec["params"]
+        params = spec.get("params", {})
         
-        # Validate table exists
         if table_name not in metadata.tables:
             raise ValueError(f"Table '{table_name}' not found in metadata")
         
-        # Get constraint class
         constraint_class = getattr(sdv_constraints, constraint_type, None)
         if not constraint_class:
             raise ValueError(f"Constraint type '{constraint_type}' not found in sdv.constraints")
         
-        # Validate columns exist
+        # Validate columns exist in the table schema
         table_columns = list(metadata.tables[table_name].columns.keys())
         for key, value in params.items():
             if 'column' in key.lower():
                 cols = [value] if isinstance(value, str) else value
                 for col in cols:
-                    if col not in table_columns:
+                    if col and col not in table_columns:
                         raise ValueError(
-                            f"Column '{col}' not in table '{table_name}'. "
-                            f"Available columns: {table_columns}"
+                            f"Column '{col}' not in table '{table_name}'. Available columns: {table_columns}"
                         )
         
-        # Initialize constraint using the correct strategy
-        try:
-            if constraint_type in CONSTRUCTOR_PARAM_TYPES:
-                # Direct initialization with parameters
+        # Initialize constraint based on its category
+        if constraint_type in MULTI_TABLE_CONSTRAINTS:
+            # Pass table_name explicitly as first positional argument
+            constraint = constraint_class(table_name, **params)
+        
+        elif constraint_type in CONSTRUCTOR_PARAM_TYPES:
+            constraint = constraint_class(**params)
+        
+        elif constraint_type in SET_PARAMETERS_TYPES:
+            constraint = constraint_class()
+            constraint._set_parameters(**params)
+            
+            # Prepare dummy data for _fit call if needed
+            dummy_cols = []
+            # Collect relevant columns for dummy dataframe
+            for key in ['column_name', 'column_names', 'low_column_name', 'high_column_name']:
+                val = params.get(key)
+                if val:
+                    if isinstance(val, list):
+                        dummy_cols.extend(val)
+                    else:
+                        dummy_cols.append(val)
+            dummy_cols = list(set(dummy_cols))  # unique column names
+            dummy_df = pd.DataFrame(columns=dummy_cols)
+            
+            if hasattr(constraint, '_fit'):
+                constraint._fit(dummy_df)
+        
+        else:
+            # Last resort fallback: try constructor, then _set_parameters and _fit
+            try:
                 constraint = constraint_class(**params)
-                
-            elif constraint_type in SET_PARAMETERS_TYPES:
-                # Special initialization sequence
+            except TypeError:
                 constraint = constraint_class()
-                constraint._set_parameters(**params)
-                
-                # Some constraints require additional setup
+                if hasattr(constraint, '_set_parameters'):
+                    constraint._set_parameters(**params)
                 if hasattr(constraint, '_fit'):
-                    # Create dummy data for fitting
-                    dummy_data = pd.DataFrame(columns=[params.get('column_name')] or 
-                                            params.get('low_column_name', '') or 
-                                            list(params.get('column_names', [])))
-                    constraint._fit(dummy_data)
-                    
-            else:
-                # Try both initialization strategies
-                try:
-                    constraint = constraint_class(**params)
-                except TypeError:
-                    constraint = constraint_class()
-                    if hasattr(constraint, '_set_parameters'):
-                        constraint._set_parameters(**params)
-                    elif hasattr(constraint, '_fit'):
-                        constraint._fit(None)
+                    dummy_cols = []
+                    for key in ['column_name', 'column_names', 'low_column_name', 'high_column_name']:
+                        val = params.get(key)
+                        if val:
+                            if isinstance(val, list):
+                                dummy_cols.extend(val)
+                            else:
+                                dummy_cols.append(val)
+                    dummy_cols = list(set(dummy_cols))
+                    dummy_df = pd.DataFrame(columns=dummy_cols)
+                    constraint._fit(dummy_df)
         
-        except Exception as e:
-            raise RuntimeError(
-                f"Failed to initialize {constraint_type} constraint: {str(e)}\n"
-                f"Parameters: {params}\n"
-                f"Try different parameter names or constraint type"
-            )
-        
-        constraints_list.append((table_name, constraint))
+        constraints_list.append(constraint)
     
     return constraints_list
 
-def fit_with_dynamic_constraints(metadata, tables, constraint_specs):
-    """Fit synthesizer with dynamically provided constraints
-    
-    Args:
-        metadata: SDV MultiTableMetadata
-        tables: Dictionary of {table_name: DataFrame}
-        constraint_specs: List of constraint dictionaries
-        
-    Returns:
-        Fitted HMASynthesizer
-    """
-    synthesizer = HMASynthesizer(metadata)
-    
-    # Process constraints if provided
-    constraints = create_dynamic_constraints(constraint_specs, metadata) if constraint_specs else None
-    
-    # Fit synthesizer
-    synthesizer.fit(
-        tables=tables,
-        constraints=constraints
-    )
-    
-    return synthesizer
 
 # Define any constraints in generic format
 user_constraints = [
