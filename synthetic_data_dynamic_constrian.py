@@ -6,8 +6,10 @@ import sdv.constraints as sdv_constraints
 from sdv.constraints import Constraint
 from sdv.multi_table import HMASynthesizer
 
+
+
 def create_dynamic_constraints(constraint_specs, metadata):
-    """Create properly initialized SDV constraints for 1.23.0"""
+    """Properly initializes SDV constraints for version 1.23.0"""
     constraints_list = []
     
     for spec in constraint_specs:
@@ -15,50 +17,53 @@ def create_dynamic_constraints(constraint_specs, metadata):
         constraint_type = spec["type"]
         params = spec["params"]
         
-        # 1. Validate table exists
+        # Validate table exists
         if table_name not in metadata.tables:
             raise ValueError(f"Table '{table_name}' not found in metadata")
         
-        # 2. Get constraint class
-        try:
-            constraint_class = getattr(sdv_constraints, constraint_type)
-            if not issubclass(constraint_class, Constraint):
-                raise TypeError(f"{constraint_type} is not a valid SDV constraint")
-        except AttributeError:
+        # Get constraint class
+        constraint_class = getattr(sdv_constraints, constraint_type, None)
+        if not constraint_class:
             raise ValueError(f"Constraint type '{constraint_type}' not found in sdv.constraints")
         
-        # 3. Validate columns
+        # Validate columns exist
         table_columns = list(metadata.tables[table_name].columns.keys())
-        for param_name, param_value in params.items():
-            if 'column' in param_name.lower():
-                if isinstance(param_value, str):
-                    if param_value not in table_columns:
-                        raise ValueError(f"Column '{param_value}' not in table '{table_name}'. Available: {table_columns}")
-                elif isinstance(param_value, list):
-                    for col in param_value:
-                        if col not in table_columns:
-                            raise ValueError(f"Column '{col}' not in table '{table_name}'. Available: {table_columns}")
+        for key, value in params.items():
+            if 'column' in key.lower():
+                cols = [value] if isinstance(value, str) else value
+                for col in cols:
+                    if col not in table_columns:
+                        raise ValueError(
+                            f"Column '{col}' not in table '{table_name}'. "
+                            f"Available columns: {table_columns}"
+                        )
         
-        # 4. Create and initialize constraint PROPERLY
+        # SPECIAL HANDLING FOR SPECIFIC CONSTRAINT TYPES
         try:
-            # SPECIAL HANDLING FOR SDV 1.23.0
-            constraint = constraint_class()
+            # For constraints that require constructor parameters
+            if constraint_type in ["FixedCombinations", "UniqueCombinations"]:
+                constraint = constraint_class(**params)
             
-            # Set parameters using SDV's internal method
-            if hasattr(constraint, '_set_parameters'):
+            # For constraints that need special initialization
+            elif constraint_type in ["Inequality", "ScalarInequality", "Range"]:
+                constraint = constraint_class()
                 constraint._set_parameters(**params)
+            
+            # For other constraints
             else:
-                # Fallback for some constraint types
-                for key, value in params.items():
-                    setattr(constraint, key, value)
-                
-                # Required initialization
-                if hasattr(constraint, '_fit'):
-                    constraint._fit(None)
+                try:
+                    # First try with parameters in constructor
+                    constraint = constraint_class(**params)
+                except TypeError:
+                    # Fallback to parameter setting
+                    constraint = constraint_class()
+                    constraint._set_parameters(**params)
         except Exception as e:
-            raise RuntimeError(f"Failed to initialize {constraint_type}: {str(e)}")
+            raise RuntimeError(
+                f"Failed to initialize {constraint_type} constraint: {str(e)}\n"
+                f"Parameters: {params}"
+            )
         
-        # 5. Add to constraints list
         constraints_list.append((table_name, constraint))
     
     return constraints_list
