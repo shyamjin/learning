@@ -2,57 +2,66 @@ from sdv.multi_table import HMASynthesizer
 import sdv.constraints as sdv_constraints
 from sdv.metadata import MultiTableMetadata
 
+import sdv.constraints as sdv_constraints
+from sdv.constraints import Constraint
+from sdv.multi_table import HMASynthesizer
+
 def create_dynamic_constraints(constraint_specs, metadata):
-    """Dynamically create SDV constraint objects from generic specifications
-    
-    Args:
-        constraint_specs: List of constraint dictionaries
-        metadata: SDV MultiTableMetadata object
-        
-    Returns:
-        Dictionary of {table_name: [constraint_objects]}
-    """
-    constraints_dict = {}
+    """Create properly initialized SDV constraints for 1.23.0"""
+    constraints_list = []
     
     for spec in constraint_specs:
         table_name = spec["table"]
         constraint_type = spec["type"]
         params = spec["params"]
         
-        # Validate table exists
+        # 1. Validate table exists
         if table_name not in metadata.tables:
             raise ValueError(f"Table '{table_name}' not found in metadata")
         
-        # Dynamically get constraint class
-        constraint_class = getattr(sdv_constraints, constraint_type, None)
-        if not constraint_class:
+        # 2. Get constraint class
+        try:
+            constraint_class = getattr(sdv_constraints, constraint_type)
+            if not issubclass(constraint_class, Constraint):
+                raise TypeError(f"{constraint_type} is not a valid SDV constraint")
+        except AttributeError:
             raise ValueError(f"Constraint type '{constraint_type}' not found in sdv.constraints")
         
-        # Validate columns exist in table
-        table_columns = set(metadata.tables[table_name].columns.keys())
-        for key, value in params.items():
-            # Handle column references (single or multiple)
-            if 'column' in key.lower():
-                if isinstance(value, str):
-                    if value not in table_columns:
-                        raise ValueError(f"Column '{value}' not found in table '{table_name}'")
-                elif isinstance(value, list):
-                    for col in value:
+        # 3. Validate columns
+        table_columns = list(metadata.tables[table_name].columns.keys())
+        for param_name, param_value in params.items():
+            if 'column' in param_name.lower():
+                if isinstance(param_value, str):
+                    if param_value not in table_columns:
+                        raise ValueError(f"Column '{param_value}' not in table '{table_name}'. Available: {table_columns}")
+                elif isinstance(param_value, list):
+                    for col in param_value:
                         if col not in table_columns:
-                            raise ValueError(f"Column '{col}' not found in table '{table_name}'")
+                            raise ValueError(f"Column '{col}' not in table '{table_name}'. Available: {table_columns}")
         
-        # Instantiate constraint
+        # 4. Create and initialize constraint PROPERLY
         try:
-            constraint = constraint_class(**params)
-        except TypeError as e:
-            raise ValueError(f"Invalid parameters for {constraint_type}: {str(e)}")
+            # SPECIAL HANDLING FOR SDV 1.23.0
+            constraint = constraint_class()
+            
+            # Set parameters using SDV's internal method
+            if hasattr(constraint, '_set_parameters'):
+                constraint._set_parameters(**params)
+            else:
+                # Fallback for some constraint types
+                for key, value in params.items():
+                    setattr(constraint, key, value)
+                
+                # Required initialization
+                if hasattr(constraint, '_fit'):
+                    constraint._fit(None)
+        except Exception as e:
+            raise RuntimeError(f"Failed to initialize {constraint_type}: {str(e)}")
         
-        # Add to constraints dictionary
-        if table_name not in constraints_dict:
-            constraints_dict[table_name] = []
-        constraints_dict[table_name].append(constraint)
+        # 5. Add to constraints list
+        constraints_list.append((table_name, constraint))
     
-    return constraints_dict
+    return constraints_list
 
 def fit_with_dynamic_constraints(metadata, tables, constraint_specs):
     """Fit synthesizer with dynamically provided constraints
