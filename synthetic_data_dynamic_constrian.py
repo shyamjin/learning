@@ -152,15 +152,74 @@ synthesizer = fit_with_dynamic_constraints(
 # Generate synthetic data
 synthetic_data = synthesizer.sample(scale=1.0)
 
+-------------------------------------------------
+import sdv.constraints as sdv_constraints
 
-# Minimal working example
-from sdv.metadata import MultiTableMetadata
-from sdv.constraints import ScalarInequality
+def create_dynamic_constraints(constraint_specs, metadata):
+    constraints_list = []
+    
+    for spec in constraint_specs:
+        table_name = spec["table"]
+        constraint_type = spec["type"]
+        params = spec["params"]
+        
+        # 1. Validate table exists
+        if table_name not in metadata.tables:
+            raise ValueError(f"Table '{table_name}' not found in metadata")
+        
+        # 2. Get constraint class
+        constraint_class = getattr(sdv_constraints, constraint_type, None)
+        if not constraint_class:
+            raise ValueError(f"Constraint type '{constraint_type}' not found")
+        
+        # 3. Validate columns
+        table_columns = list(metadata.tables[table_name].columns.keys())
+        for key, value in params.items():
+            if 'column' in key:
+                cols = [value] if isinstance(value, str) else value
+                for col in cols:
+                    if col not in table_columns:
+                        raise ValueError(f"Column '{col}' not in table '{table_name}'")
+        
+        # 4. Create constraint with try/except
+        try:
+            # Try direct initialization
+            constraint = constraint_class(**params)
+        except TypeError as e:
+            # Handle special initialization
+            if constraint_type == "FixedCombinations":
+                # FixedCombinations requires column_names parameter
+                constraint = constraint_class(column_names=params["column_names"])
+            else:
+                raise ValueError(f"Constraint creation failed: {str(e)}")
+        
+        # 5. Add to list
+        constraints_list.append((table_name, constraint))
+    
+    return constraints_list
 
-metadata = MultiTableMetadata()
-metadata.add_table(name='test', data=pd.DataFrame(columns=['age']))
-
-constraint = ScalarInequality(column_name='age', relation='>=', value=18)
+# Create synthesizer
 synthesizer = HMASynthesizer(metadata)
-synthesizer.add_constraints([('test', constraint)])
-synthesizer.fit(tables={'test': pd.DataFrame(columns=['age'])})
+
+# Generate constraints
+constraints_list = create_dynamic_constraints([
+    {
+        "table": "users",
+        "type": "ScalarInequality",
+        "params": {"column_name": "age", "relation": ">=", "value": 18}
+    },
+    {
+        "table": "products",
+        "type": "FixedCombinations",
+        "params": {"column_names": ["category", "price"]}
+    }
+], metadata)
+
+# Add constraints
+synthesizer.add_constraints(constraints_list)
+
+# Fit with real data
+synthesizer.fit(tables=tables)
+
+# Generate synthetic data
+synthetic_data = synthesizer.sample(scale=1.0)
