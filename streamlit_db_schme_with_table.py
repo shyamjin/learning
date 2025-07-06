@@ -238,9 +238,10 @@ elif menu == "Request":
                         with tab:
                             df = pd.DataFrame(result_tables[title])
                             st.subheader(f"{title} Table")
-                            st.dataframe(df, use_container_width=True)
+                            edited_df = st.data_editor(df, use_container_width=True, key=f"editor_{title}")
+                            # Checkbox to include table in submission
                             if st.checkbox(f"✅ Select {title} for submission", key=f"select_{title}"):
-                                selected_tables.append((title, df))
+                                selected_tables.append((title, edited_df))
 
                     st.markdown("---")
                     if selected_tables:
@@ -255,6 +256,5 @@ elif menu == "Request":
                                     st.error(f"❌ Failed to save {title}: {e}")
                     else:
                         st.info("👉 Select at least one table to submit.")
-
 
 
