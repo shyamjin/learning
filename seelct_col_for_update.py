@@ -1,24 +1,5 @@
-import streamlit as st
-import pandas as pd
 from faker import Faker
-import requests
-
 fake = Faker()
-
-API_ENDPOINT = "http://localhost:8080/submit_data"  # Replace with your real endpoint
-
-# Sample data (can come from DB or CSV)
-df = pd.DataFrame({
-    'customer_id': [1, 2, 3],
-    'customer_name': ['Alice', 'Bob', 'Charlie'],
-    'email': ['alice@example.com', 'bob@example.com', 'charlie@example.com'],
-    'score': [91.5, 78.2, 88.0],
-    'is_active': [True, False, True]
-})
-
-# Keep the modified df in session state
-if "modified_df" not in st.session_state:
-    st.session_state.modified_df = df.copy()
 
 def fakerize_column(col_name, dtype, n_rows):
     if pd.api.types.is_string_dtype(dtype):
@@ -32,41 +13,37 @@ def fakerize_column(col_name, dtype, n_rows):
     else:
         return [f"UNK-{i}" for i in range(n_rows)]
 
-st.title("🧪 In-place Faker + Submit")
+# Inside your multi-tab UI
+tab_titles = list(result_tables.keys())
+tabs = st.tabs(tab_titles)
+selected_tables = []
 
-# Step 1: Let user select columns to fakerize
-columns = st.multiselect(
-    "🔐 Select columns to replace with fake values (applied directly below)",
-    options=st.session_state.modified_df.columns.tolist()
-)
+for tab, title in zip(tabs, tab_titles):
+    with tab:
+        df_key = f"modified_df_{title}"
+        if df_key not in st.session_state:
+            st.session_state[df_key] = pd.DataFrame(result_tables[title])
 
-# Step 2: Apply Faker on button
-if st.button("🎲 Apply Faker to Selected Columns"):
-    df = st.session_state.modified_df
-    for col in columns:
-        df[col] = fakerize_column(col, df[col].dtype, len(df))
-    st.success(f"✅ Faker applied to: {', '.join(columns)}")
+        st.write(f"### Preview: `{title}`")
+        # Column selection for fakerization
+        selected_cols = st.multiselect(
+            f"🎭 Select columns in `{title}` to replace with Faker values",
+            options=st.session_state[df_key].columns.tolist(),
+            key=f"faker_cols_{title}"
+        )
 
-# Step 3: Show editable dataframe
-st.subheader("📋 Editable Table")
-edited_df = st.data_editor(
-    st.session_state.modified_df,
-    use_container_width=True,
-    key="editable_data"
-)
+        if st.button(f"🎲 Apply Faker to selected columns in `{title}`"):
+            df = st.session_state[df_key]
+            for col in selected_cols:
+                dtype = df[col].dtype
+                df[col] = fakerize_column(col, dtype, len(df))
+            st.success(f"✅ Faker applied to {', '.join(selected_cols)} in `{title}`")
 
-# Step 4: Submit final version to backend
-if st.button("🚀 Submit to Backend API"):
-    try:
-        payload = edited_df.to_dict(orient='records')
-        response = requests.post(API_ENDPOINT, json={"data": payload})
-        if response.status_code == 200:
-            st.success("✅ Successfully submitted to backend!")
-            st.json(response.json())
-        else:
-            st.error(f"❌ Submission failed: {response.status_code}")
-            st.text(response.text)
-    except Exception as e:
-        st.error(f"🚨 Error during submission: {e}")
+        # Editable table
+        edited_df = st.data_editor(st.session_state[df_key], use_container_width=True, key=f"editor_{title}")
+        
+        # Save edited df back
+        st.session_state[df_key] = edited_df
 
-
+        if st.checkbox(f"✅ Select `{title}` for submission", key=f"select_{title}"):
+            selected_tables.append((title, edited_df))
