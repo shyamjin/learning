@@ -128,3 +128,4 @@ class LangChainSQLAgent:
             "executor_cache": len(self._executor_cache)
         }
 
+
